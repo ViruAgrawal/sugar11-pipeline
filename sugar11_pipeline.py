@@ -7,7 +7,7 @@ from typing import Optional
 import pandas as pd
 import matplotlib.pyplot as plt
 
-import openbb as obb  # assumes OpenBB is installed in the Action environment
+import yfinance as yf
 
 # ---------------- Parameters ----------------
 N_CONTRACTS = 12
@@ -74,22 +74,29 @@ symbols_contracts = [to_yf_symbol(code, yr) for code, yr in pairs]
 symbols_all = ["SB=F"] + symbols_contracts
 
 def fetch_hist(symbol: str) -> pd.DataFrame:
-    """
-    Fetch daily historical data.
-    Any failure (including EmptyDataError raised by OpenBB) returns empty DataFrame.
-    """
     try:
-        obj = obb.equity.price.historical(
-            symbol=symbol,
-            start_date=start,
-            end_date=end,
-            interval="1d",
-            provider=PROVIDER,
+        df = yf.download(
+            symbol,
+            start=start,
+            end=end,
+            progress=False,
+            auto_adjust=False,
         )
-        df = obj.to_df()
     except Exception as e:
         print(f"[Skip] {symbol}: {type(e).__name__}")
         return pd.DataFrame()
+
+    if df.empty:
+        return pd.DataFrame()
+
+    return (
+        df.rename(columns=str.lower)
+          .reset_index()
+          .rename(columns={"date": "date"})
+          .assign(symbol=symbol)
+          [["date", "close", "high", "low", "volume", "symbol"]]
+    )
+
 
     if df.empty:
         return pd.DataFrame()
