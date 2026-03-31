@@ -5,15 +5,11 @@ from calendar import monthrange
 from typing import Optional
 
 import pandas as pd
-import matplotlib.pyplot as plt
-
 import yfinance as yf
 
 # ---------------- Parameters ----------------
 N_CONTRACTS = 12
 HISTORY_DAYS = 1800
-PROVIDER = "yfinance"
-ROLL_DAYS_BEFORE_EXPIRY = 0
 
 start = (date.today() - timedelta(days=HISTORY_DAYS)).isoformat()
 end = date.today().isoformat()
@@ -31,7 +27,7 @@ def last_business_day(year: int, month: int) -> pd.Timestamp:
 
 def expiry_from_symbol(symbol: str) -> Optional[pd.Timestamp]:
     """
-    Example: SBH26.NYB -> delivery month March 2026
+    Example: SBH26.NYB → delivery month March 2026
     ICE expiry approximated as last business day of preceding month.
     """
     try:
@@ -48,8 +44,7 @@ def expiry_from_symbol(symbol: str) -> Optional[pd.Timestamp]:
 
 def next_contract_pairs(n: int, today: Optional[date] = None):
     today = today or date.today()
-    out = []
-    yr = today.year
+    out, yr = [], today.year
 
     start_idx = next(i for i, (_, m) in enumerate(CYCLE) if m >= today.month)
     i = start_idx
@@ -62,7 +57,6 @@ def next_contract_pairs(n: int, today: Optional[date] = None):
         i = (i + 1) % len(CYCLE)
         if i == 0:
             yr += 1
-
     return out
 
 def to_yf_symbol(code: str, year_full: int) -> str:
@@ -74,6 +68,9 @@ symbols_contracts = [to_yf_symbol(code, yr) for code, yr in pairs]
 symbols_all = ["SB=F"] + symbols_contracts
 
 def fetch_hist(symbol: str) -> pd.DataFrame:
+    """
+    Robust Yahoo Finance downloader (CI / GitHub Actions safe).
+    """
     try:
         df = yf.download(
             symbol,
@@ -89,23 +86,26 @@ def fetch_hist(symbol: str) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
 
-    return (
-        df.rename(columns=str.lower)
-          .reset_index()
-          .rename(columns={"date": "date"})
-          .assign(symbol=symbol)
-          [["date", "close", "high", "low", "volume", "symbol"]]
-    )
+    # Reset index (date may be index, Date, or Datetime)
+    df = df.reset_index()
 
+    if "Date" in df.columns:
+        df = df.rename(columns={"Date": "date"})
+    elif "Datetime" in df.columns:
+        df = df.rename(columns={"Datetime": "date"})
+    else:
+        df = df.rename(columns={df.columns[0]: "date"})
 
-    if df.empty:
+    # Normalize columns
+    df.columns = [c.lower() for c in df.columns]
+
+    required = {"date", "close", "high", "low", "volume"}
+    if not required.issubset(df.columns):
+        print(f"[Skip] {symbol}: missing columns {required - set(df.columns)}")
         return pd.DataFrame()
 
     return (
-        df[["close", "high", "low", "volume"]]
-        .copy()
-        .rename_axis("date")
-        .reset_index()
+        df[["date", "close", "high", "low", "volume"]]
         .assign(symbol=symbol)
     )
 
@@ -141,12 +141,7 @@ contracts_wide = contracts_df.pivot_table(
 ).sort_index()
 
 counts = contracts_wide.notna().sum(axis=1)
-
-if (counts >= 4).any():
-    as_of = counts[counts >= 4].index.max()
-else:
-    as_of = contracts_wide.index.max()
-
+as_of = counts[counts >= 4].index.max() if (counts >= 4).any() else contracts_wide.index.max()
 as_of_ts = pd.to_datetime(as_of)
 
 # ---------------- Forward points ----------------
@@ -164,26 +159,17 @@ last_px_by_contract["change"] = (
 )
 
 forward_points = last_px_by_contract[["close", "expiry"]].copy()
+forward_points = forward_points[
+    forward_points["expiry"] >= as_of_ts.normalize()
+].sort_values("expiry")
 
-if pd.notna(as_of_ts):
-    forward_points = forward_points[
-        forward_points["expiry"] >= as_of_ts.normalize()
-    ]
+# ---------------- Export tables for Power BI ----------------
 
-forward_points = forward_points.sort_values("expiry")
-
-# ---------------- Export tables for Power BI / OneDrive ----------------
-
-# 1) Historical continuous prices
 pb_continuous = (
     cont_df.reset_index()
-    .rename(columns={
-        "date": "Date",
-        "close_cont": "Close"
-    })
+    .rename(columns={"date": "Date", "close_cont": "Close"})
 )
 
-# 2) Forward curve / enriched bonus table
 pb_forward = (
     forward_points
     .join(last_px_by_contract[["high", "low", "volume", "change"]])
@@ -199,12 +185,8 @@ pb_forward = (
     })
 )
 
-# 3) Metadata table
-pb_meta = pd.DataFrame({
-    "AsOfDate": [as_of_ts]
-})
+pb_meta = pd.DataFrame({"AsOfDate": [as_of_ts]})
 
-# ---------------- Write CSV files (GitHub Actions friendly) ----------------
 pb_continuous.to_csv("sb_continuous.csv", index=False)
 pb_forward.to_csv("sb_forward.csv", index=False)
 pb_meta.to_csv("sb_meta.csv", index=False)
