@@ -70,42 +70,36 @@ def fetch_hist(symbol: str) -> pd.DataFrame:
             progress=False,
             auto_adjust=False,
         )
-    except Exception as e:
-        print(f"[Skip] {symbol}: {type(e).__name__}")
+    except Exception:
+        print(f"[Skip] {symbol}: download failed")
         return pd.DataFrame()
 
     if df.empty:
+        print(f"[Skip] {symbol}: empty data")
         return pd.DataFrame()
 
-    # Reset index first
     df = df.reset_index()
 
-    # ✅ SAFE column normalization (this fixes the tuple issue permanently)
-    def normalize_col(c):
-        if isinstance(c, tuple):
-            return c[0].lower()
-        return str(c).lower()
+    def norm(c):
+        return c[0].lower() if isinstance(c, tuple) else str(c).lower()
 
-    df.columns = [normalize_col(c) for c in df.columns]
+    df.columns = [norm(c) for c in df.columns]
 
     if "date" not in df.columns:
         df = df.rename(columns={df.columns[0]: "date"})
 
     required = {"date", "close", "high", "low", "volume"}
     if not required.issubset(df.columns):
-        print(f"[Skip] {symbol}: missing columns {required - set(df.columns)}")
+        print(f"[Skip] {symbol}: missing columns")
         return pd.DataFrame()
 
-    return (
-        df[["date", "close", "high", "low", "volume"]]
-        .assign(symbol=symbol)
-    )
+    return df[["date", "close", "high", "low", "volume"]].assign(symbol=symbol)
 
 frames = [fetch_hist(sym) for sym in symbols_all]
 frames = [f for f in frames if not f.empty]
 
 if not frames:
-    raise RuntimeError("No data returned for any symbol.")
+    raise RuntimeError("No usable Yahoo Finance data returned.")
 
 all_df = pd.concat(frames, ignore_index=True)
 
@@ -122,59 +116,49 @@ cont_df = (
 contracts_df = all_df.query("symbol != 'SB=F'").copy()
 contracts_df["date"] = pd.to_datetime(contracts_df["date"], errors="coerce")
 contracts_df = contracts_df.dropna(subset=["date"])
+
 contracts_df["expiry"] = contracts_df["symbol"].apply(expiry_from_symbol)
 contracts_df = contracts_df.dropna(subset=["expiry"])
 
-# ---------------- Determine as_of ----------------
-contracts_wide = contracts_df.pivot_table(
-    index="date", columns="symbol", values="close"
-).sort_index()
+if contracts_df.empty:
+    print("⚠️ No valid futures contracts available from Yahoo.")
+    pb_forward = pd.DataFrame()
+else:
+    contracts_wide = contracts_df.pivot_table(
+        index="date", columns="symbol", values="close"
+    ).sort_index()
 
-counts = contracts_wide.notna().sum(axis=1)
-as_of = counts[counts >= 4].index.max() if (counts >= 4).any() else contracts_wide.index.max()
-as_of_ts = pd.to_datetime(as_of)
+    counts = contracts_wide.notna().sum(axis=1)
+    as_of = counts[counts >= 2].index.max() if (counts >= 2).any() else contracts_wide.index.max()
+    as_of_ts = pd.to_datetime(as_of)
 
-# ---------------- Forward points ----------------
-last_px_by_contract = (
-    contracts_df[contracts_df["date"] <= as_of_ts]
-    .sort_values(["symbol", "date"])
-    .groupby("symbol")
-    .apply(lambda g: g.assign(prev_close=g["close"].shift(1)).tail(1))
-    .reset_index(drop=True)
-    .set_index("symbol")
+    last_px_by_contract = (
+        contracts_df[contracts_df["date"] <= as_of_ts]
+        .sort_values(["symbol", "date"])
+        .groupby("symbol")
+        .tail(1)
+        .set_index("symbol")
+    )
+
+    pb_forward = (
+        last_px_by_contract
+        .reset_index()[["symbol", "expiry", "close", "high", "low", "volume"]]
+        .rename(columns={
+            "symbol": "Symbol",
+            "expiry": "Expiry",
+            "close": "Close",
+            "high": "High",
+            "low": "Low",
+            "volume": "Volume",
+        })
+    )
+
+# ---------------- Export ----------------
+pb_continuous = cont_df.reset_index().rename(
+    columns={"date": "Date", "close_cont": "Close"}
 )
 
-last_px_by_contract["change"] = (
-    last_px_by_contract["close"] - last_px_by_contract["prev_close"]
-)
-
-forward_points = last_px_by_contract[["close", "expiry"]].copy()
-forward_points = forward_points[
-    forward_points["expiry"] >= as_of_ts.normalize()
-].sort_values("expiry")
-
-# ---------------- Export tables ----------------
-pb_continuous = (
-    cont_df.reset_index()
-    .rename(columns={"date": "Date", "close_cont": "Close"})
-)
-
-pb_forward = (
-    forward_points
-    .join(last_px_by_contract[["high", "low", "volume", "change"]])
-    .reset_index()
-    .rename(columns={
-        "symbol": "Symbol",
-        "expiry": "Expiry",
-        "close": "Close",
-        "change": "Change",
-        "high": "High",
-        "low": "Low",
-        "volume": "Volume",
-    })
-)
-
-pb_meta = pd.DataFrame({"AsOfDate": [as_of_ts]})
+pb_meta = pd.DataFrame({"AsOfDate": [pd.Timestamp.today()]})
 
 pb_continuous.to_csv("sb_continuous.csv", index=False)
 pb_forward.to_csv("sb_forward.csv", index=False)
