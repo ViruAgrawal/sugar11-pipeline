@@ -26,10 +26,6 @@ def last_business_day(year: int, month: int) -> pd.Timestamp:
     return dt
 
 def expiry_from_symbol(symbol: str) -> Optional[pd.Timestamp]:
-    """
-    Example: SBH26.NYB → delivery month March 2026
-    ICE expiry approximated as last business day of preceding month.
-    """
     try:
         code = symbol[2]
         yy = int(symbol[3:5])
@@ -45,10 +41,8 @@ def expiry_from_symbol(symbol: str) -> Optional[pd.Timestamp]:
 def next_contract_pairs(n: int, today: Optional[date] = None):
     today = today or date.today()
     out, yr = [], today.year
-
     start_idx = next(i for i, (_, m) in enumerate(CYCLE) if m >= today.month)
     i = start_idx
-
     while len(out) < n:
         code, m = CYCLE[i]
         if yr == today.year and m < today.month:
@@ -68,9 +62,6 @@ symbols_contracts = [to_yf_symbol(code, yr) for code, yr in pairs]
 symbols_all = ["SB=F"] + symbols_contracts
 
 def fetch_hist(symbol: str) -> pd.DataFrame:
-    """
-    Robust Yahoo Finance downloader (CI / GitHub Actions safe).
-    """
     try:
         df = yf.download(
             symbol,
@@ -86,18 +77,19 @@ def fetch_hist(symbol: str) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame()
 
-    # Reset index (date may be index, Date, or Datetime)
+    # Reset index first
     df = df.reset_index()
 
-    if "Date" in df.columns:
-        df = df.rename(columns={"Date": "date"})
-    elif "Datetime" in df.columns:
-        df = df.rename(columns={"Datetime": "date"})
-    else:
-        df = df.rename(columns={df.columns[0]: "date"})
+    # ✅ SAFE column normalization (this fixes the tuple issue permanently)
+    def normalize_col(c):
+        if isinstance(c, tuple):
+            return c[0].lower()
+        return str(c).lower()
 
-    # Normalize columns
-    df.columns = [c.lower() for c in df.columns]
+    df.columns = [normalize_col(c) for c in df.columns]
+
+    if "date" not in df.columns:
+        df = df.rename(columns={df.columns[0]: "date"})
 
     required = {"date", "close", "high", "low", "volume"}
     if not required.issubset(df.columns):
@@ -128,10 +120,8 @@ cont_df = (
 
 # ---------------- Contracts ----------------
 contracts_df = all_df.query("symbol != 'SB=F'").copy()
-
 contracts_df["date"] = pd.to_datetime(contracts_df["date"], errors="coerce")
 contracts_df = contracts_df.dropna(subset=["date"])
-
 contracts_df["expiry"] = contracts_df["symbol"].apply(expiry_from_symbol)
 contracts_df = contracts_df.dropna(subset=["expiry"])
 
@@ -163,8 +153,7 @@ forward_points = forward_points[
     forward_points["expiry"] >= as_of_ts.normalize()
 ].sort_values("expiry")
 
-# ---------------- Export tables for Power BI ----------------
-
+# ---------------- Export tables ----------------
 pb_continuous = (
     cont_df.reset_index()
     .rename(columns={"date": "Date", "close_cont": "Close"})
@@ -191,7 +180,4 @@ pb_continuous.to_csv("sb_continuous.csv", index=False)
 pb_forward.to_csv("sb_forward.csv", index=False)
 pb_meta.to_csv("sb_meta.csv", index=False)
 
-print("✅ CSV export complete:")
-print(" - sb_continuous.csv")
-print(" - sb_forward.csv")
-print(" - sb_meta.csv")
+print("✅ CSV export complete")
