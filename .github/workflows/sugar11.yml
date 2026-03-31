@@ -22,7 +22,7 @@ jobs:
       - name: ✅ Install dependencies
         run: |
           pip install --upgrade pip
-          pip install pandas matplotlib openbb yfinance
+          pip install pandas matplotlib yfinance
 
       - name: ✅ Run Sugar #11 pipeline
         run: |
