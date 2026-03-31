@@ -1,0 +1,38 @@
+name: Sugar #11 Futures Pipeline
+
+on:
+  schedule:
+    # Runs at 9:00 UTC Monday–Friday
+    - cron: "0 9 * * 1-5"
+  workflow_dispatch:
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ✅ Checkout repository
+        uses: actions/checkout@v4
+
+      - name: ✅ Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: ✅ Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pandas matplotlib openbb yfinance
+
+      - name: ✅ Run Sugar #11 pipeline
+        run: |
+          python sugar11_pipeline.py
+
+      - name: ✅ Commit updated CSVs
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
+
+          git add sb_continuous.csv sb_forward.csv sb_meta.csv
+          git commit -m "Auto-update Sugar11 data [skip ci]" || echo "No changes"
+          git push
