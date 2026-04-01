@@ -158,7 +158,7 @@ pb_continuous = cont_df.reset_index().rename(
     columns={"date": "Date", "close_cont": "Close"}
 )
 
-pb_meta = pd.DataFrame({[pd.Timestamp.today()]})
+pb_meta = pd.DataFrame([pd.Timestamp.utcnow()])
 
 pb_continuous.to_csv("sb_continuous.csv", index=False)
 pb_forward.to_csv("sb_forward.csv", index=False)
