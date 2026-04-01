@@ -73,7 +73,13 @@ spot = yf.download(
 if spot.empty:
     raise RuntimeError("No CAD/USD spot data returned from Yahoo.")
 
-cadusd_hist = spot["Close"].rename("CADUSD")
+close = spot["Close"]
+
+# yfinance may return a DataFrame instead of Series
+if isinstance(close, pd.DataFrame):
+    close = close.iloc[:, 0]
+
+cadusd_hist = close.rename("CADUSD")
 cadusd_hist.index.name = "Date"
 cadusd_hist = cadusd_hist.reset_index()
 
@@ -151,7 +157,7 @@ if df_fwd is None or df_fwd.empty:
 pb_spot = cadusd_hist[["Date","CADUSD"]]
 
 pb_meta = pd.DataFrame(
-    [pd.Timestamp.utcnow()]
+    [pd.Timestamp.now("UTC")]
 )
 
 pb_spot.to_csv("cadusd_spot.csv", index=False)
