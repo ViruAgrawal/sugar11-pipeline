@@ -1,4 +1,4 @@
-name: Sugar #11 Futures Pipeline
+name: Sugar #11 and CADUSD Futures Pipeline
 
 on:
   schedule:
@@ -40,6 +40,7 @@ jobs:
       - name: Run Sugar #11 pipeline
         run: |
           python sugar11_pipeline.py
+          python cadusd_pipeline.py
 
       # ✅ THEN commit & push
       - name: Commit updated CSVs
