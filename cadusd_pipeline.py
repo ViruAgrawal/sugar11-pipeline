@@ -5,7 +5,9 @@
 
 from datetime import date, timedelta
 from dateutil.relativedelta import relativedelta
+from io import StringIO
 
+import requests
 import pandas as pd
 import yfinance as yf
 
@@ -14,7 +16,7 @@ HISTORY_DAYS = 1800
 PAIR_YF      = "CADUSD=X"
 
 USD_FRED_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=SOFR"
-CAD_BOC_CSV  = "https://www.bankofcanada.ca/valet/observations/CORRA/csv"
+CAD_BOC_URL  = "https://www.bankofcanada.ca/valet/observations/CORRA?format=csv"
 
 TENORS = ["ON", "1W", "1M", "3M", "6M", "9M", "1Y", "2Y", "3Y", "5Y", "10Y"]
 
@@ -53,25 +55,29 @@ cadusd_spot = cadusd_spot.reset_index()
 as_of = cadusd_spot["Date"].max()
 
 # USD/CAD spot for CIP
-spot_usdcad = 1.0 / cadusd_spot.loc[cadusd_spot["Date"] == as_of, "CADUSD"].iloc[0]
+spot_usdcad = 1.0 / cadusd_spot.loc[
+    cadusd_spot["Date"] == as_of, "CADUSD"
+].iloc[0]
 
 # ---------------- USD rates (SOFR via FRED CSV) ----------------
 usd_raw = pd.read_csv(USD_FRED_CSV)
 usd_raw.columns = [c.lower() for c in usd_raw.columns]
 
-# Detect date column robustly
-date_col_usd = next(c for c in usd_raw.columns if "date" in c)
-rate_col_usd = next(c for c in usd_raw.columns if c != date_col_usd)
+usd_date_col = next(c for c in usd_raw.columns if "date" in c)
+usd_rate_col = next(c for c in usd_raw.columns if c != usd_date_col)
 
 usd_rates = (
     usd_raw
-    .assign(date=lambda d: pd.to_datetime(d[date_col_usd]))
-    .set_index("date")[rate_col_usd]
+    .assign(date=lambda d: pd.to_datetime(d[usd_date_col]))
+    .set_index("date")[usd_rate_col]
     .astype(float) / 100.0
 )
 
 # ---------------- CAD rates (CORRA via BoC Valet CSV) ----------------
-cad_raw = pd.read_csv(CAD_BOC_CSV)
+resp = requests.get(CAD_BOC_URL, timeout=20)
+resp.raise_for_status()
+
+cad_raw = pd.read_csv(StringIO(resp.text))
 cad_raw.columns = [c.lower() for c in cad_raw.columns]
 
 cad_rates = (
