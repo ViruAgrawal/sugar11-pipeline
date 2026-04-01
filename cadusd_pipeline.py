@@ -1,11 +1,10 @@
 # === CAD/USD pipeline (DF-based, CI-safe, NO scraping) ===
 # Spot: Yahoo Finance
-# USD DF: FRED (SOFR)
-# CAD DF: Bank of Canada Valet (CORRA)
+# USD DF: FRED (SOFR CSV)
+# CAD DF: Bank of Canada Valet (CORRA JSON)
 
 from datetime import date, timedelta
 from dateutil.relativedelta import relativedelta
-from io import StringIO
 
 import requests
 import pandas as pd
@@ -16,7 +15,7 @@ HISTORY_DAYS = 1800
 PAIR_YF      = "CADUSD=X"
 
 USD_FRED_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=SOFR"
-CAD_BOC_URL  = "https://www.bankofcanada.ca/valet/observations/CORRA?format=csv"
+CAD_BOC_JSON = "https://www.bankofcanada.ca/valet/observations/CORRA"
 
 TENORS = ["ON", "1W", "1M", "3M", "6M", "9M", "1Y", "2Y", "3Y", "5Y", "10Y"]
 
@@ -73,19 +72,22 @@ usd_rates = (
     .astype(float) / 100.0
 )
 
-# ---------------- CAD rates (CORRA via BoC Valet CSV) ----------------
-resp = requests.get(CAD_BOC_URL, timeout=20)
+# ---------------- CAD rates (CORRA via BoC JSON) ----------------
+resp = requests.get(CAD_BOC_JSON, timeout=20)
 resp.raise_for_status()
 
-cad_raw = pd.read_csv(StringIO(resp.text))
-cad_raw.columns = [c.lower() for c in cad_raw.columns]
+data = resp.json()["observations"]
 
-cad_rates = (
-    cad_raw
-    .assign(date=lambda d: pd.to_datetime(d["date"]))
-    .set_index("date")["value"]
-    .astype(float) / 100.0
+cad_rates = pd.Series(
+    {
+        obs["d"]: float(obs["CORRA"]["v"]) / 100.0
+        for obs in data
+        if "CORRA" in obs and "v" in obs["CORRA"]
+    }
 )
+
+cad_rates.index = pd.to_datetime(cad_rates.index)
+cad_rates = cad_rates.sort_index()
 
 # ---------------- Align rates ----------------
 rates = pd.concat(
