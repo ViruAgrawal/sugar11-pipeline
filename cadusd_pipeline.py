@@ -72,7 +72,7 @@ usd_rates = (
     .astype(float) / 100.0
 )
 
-# ---------------- CAD rates (CORRA via BoC JSON) ----------------
+# ---------------- CAD rates (CORRA via BoC Valet JSON) ----------------
 resp = requests.get(CAD_BOC_JSON, timeout=20)
 resp.raise_for_status()
 
@@ -80,9 +80,9 @@ data = resp.json()["observations"]
 
 cad_rates = pd.Series(
     {
-        obs["d"]: float(obs["CORRA"]["v"]) / 100.0
+        obs["d"]: float(obs["AVG.INTWO"]["v"]) / 100.0
         for obs in data
-        if "CORRA" in obs and "v" in obs["CORRA"]
+        if "AVG.INTWO" in obs and "v" in obs["AVG.INTWO"]
     }
 )
 
