@@ -15,7 +15,7 @@ HISTORY_DAYS = 1800
 PAIR_YF      = "CADUSD=X"
 
 USD_FRED_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=SOFR"
-CAD_BOC_JSON = "https://www.bankofcanada.ca/valet/observations/CORRA"
+CAD_BOC_JSON = "https://www.bankofcanada.ca/valet/observations/AVG.INTWO"
 
 TENORS = ["ON", "1W", "1M", "3M", "6M", "9M", "1Y", "2Y", "3Y", "5Y", "10Y"]
 
@@ -73,6 +73,7 @@ usd_rates = (
 )
 
 # ---------------- CAD rates (CORRA via BoC Valet JSON) ----------------
+
 resp = requests.get(CAD_BOC_JSON, timeout=20)
 resp.raise_for_status()
 
