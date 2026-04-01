@@ -2,17 +2,22 @@ name: Sugar #11 Futures Pipeline
 
 on:
   schedule:
-    # Runs at 9:00 UTC Monday–Friday
-    - cron: "0 9 * * 1-5"
+    - cron: "0 11 * * 1-5"
   workflow_dispatch:
+
+concurrency:
+  group: sugar11-pipeline
+  cancel-in-progress: false
 
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # IMPORTANT: needed for rebasing
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -22,21 +27,23 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install pandas matplotlib yfinance
+          pip install pandas yfinance
 
+      # ✅ PULL FIRST (working tree clean)
+      - name: Sync with remote
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
+          git pull --rebase origin main
+
+      # ✅ THEN generate files
       - name: Run Sugar #11 pipeline
         run: |
           python sugar11_pipeline.py
 
-      - name: Commit CSVs to repo
-      run: |
-        git config --global user.name "github-actions"
-        git config --global user.email "github-actions@github.com"
-    
-        # Always sync with remote first
-        git pull --rebase origin main
-    
-        git add sb_continuous.csv sb_forward.csv sb_meta.csv
-        git commit -m "Auto-update Sugar11 data [skip ci]" || echo "No changes to commit"
-    
-        git push origin main      
+      # ✅ THEN commit & push
+      - name: Commit updated CSVs
+        run: |
+          git add sb_continuous.csv sb_forward.csv sb_meta.csv
+          git commit -m "Auto-update Sugar11 data [skip ci]" || echo "No changes to commit"
+          git push origin main
