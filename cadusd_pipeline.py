@@ -65,7 +65,7 @@ rate_col_usd = next(c for c in usd_raw.columns if c != date_col_usd)
 
 usd_rates = (
     usd_raw
-    .assign(date=lambda d: pd.to_datetime(d[date_col_usd}))
+    .assign(date=lambda d: pd.to_datetime(d[date_col_usd]))
     .set_index("date")[rate_col_usd]
     .astype(float) / 100.0
 )
