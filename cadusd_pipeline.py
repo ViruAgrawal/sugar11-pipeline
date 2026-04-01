@@ -1,4 +1,7 @@
-# === CAD/USD pipeline (DF-based, CI-safe, no scraping, no pandas_datareader) ===
+# === CAD/USD pipeline (DF-based, CI-safe, NO scraping) ===
+# Spot: Yahoo Finance
+# USD DF: FRED (SOFR)
+# CAD DF: Bank of Canada Valet (CORRA)
 
 from datetime import date, timedelta
 from dateutil.relativedelta import relativedelta
@@ -10,8 +13,9 @@ import yfinance as yf
 HISTORY_DAYS = 1800
 PAIR_YF      = "CADUSD=X"
 
-USD_FRED_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=SOFR"
-CAD_FRED_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=CORRA"
+# Stable public rate sources
+USD_FRED_CSV  = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=SOFR"
+CAD_BOC_CSV   = "https://www.bankofcanada.ca/valet/observations/CORRA/csv"
 
 TENORS = ["ON", "1W", "1M", "3M", "6M", "9M", "1Y", "2Y", "3Y", "5Y", "10Y"]
 
@@ -45,21 +49,27 @@ cadusd_spot = cadusd_spot.reset_index()
 
 as_of = cadusd_spot["Date"].max()
 
-# USD/CAD spot for CIP formula
+# USD/CAD spot for CIP
 spot_usdcad = 1.0 / cadusd_spot.loc[cadusd_spot["Date"] == as_of, "CADUSD"].iloc[0]
 
-# ---------------- Fetch rates from FRED (CSV) ----------------
+# ---------------- USD rates (SOFR via FRED CSV) ----------------
 usd_rates = pd.read_csv(USD_FRED_CSV)
-cad_rates = pd.read_csv(CAD_FRED_CSV)
-
 usd_rates["DATE"] = pd.to_datetime(usd_rates["DATE"])
-cad_rates["DATE"] = pd.to_datetime(cad_rates["DATE"])
-
 usd_rates = usd_rates.set_index("DATE")["SOFR"] / 100.0
-cad_rates = cad_rates.set_index("DATE")["CORRA"] / 100.0
 
+# ---------------- CAD rates (CORRA via BoC Valet CSV) ----------------
+cad_rates = pd.read_csv(CAD_BOC_CSV)
+
+cad_rates["date"] = pd.to_datetime(cad_rates["date"])
+cad_rates["CORRA"] = pd.to_numeric(cad_rates["value"], errors="coerce") / 100.0
+cad_rates = cad_rates.set_index("date")["CORRA"]
+
+# ---------------- Align rates ----------------
 rates = pd.concat(
-    [usd_rates.rename("USD"), cad_rates.rename("CAD")],
+    [
+        usd_rates.rename("USD"),
+        cad_rates.rename("CAD")
+    ],
     axis=1
 ).dropna()
 
@@ -102,4 +112,4 @@ pd.DataFrame([pd.Timestamp.now("UTC")]).to_csv(
     header=False
 )
 
-print("✅ CAD/USD DF-based forwards exported successfully")
+print("✅ CAD/USD DF-based forward curve exported successfully")
