@@ -1,52 +1,36 @@
-# === CAD/USD pipeline (DF-based, CI-safe, no scraping) ===
-# Spot: Yahoo Finance
-# Discount factors: FRED (USD) + Bank of Canada (CAD proxy)
-# Forwards: Covered Interest Parity using DFs
+# === CAD/USD pipeline (DF-based, CI-safe, no scraping, no pandas_datareader) ===
 
 from datetime import date, timedelta
 from dateutil.relativedelta import relativedelta
 
 import pandas as pd
 import yfinance as yf
-from pandas_datareader import data as pdr
 
 # ---------------- Settings ----------------
 HISTORY_DAYS = 1800
 PAIR_YF      = "CADUSD=X"
 
-# FRED series (robust, public)
-USD_RATE_SERIES = "SOFR"     # Overnight secured USD
-CAD_RATE_SERIES = "CORRA"    # Overnight CAD proxy (via BoC mirror)
+USD_FRED_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=SOFR"
+CAD_FRED_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=CORRA"
 
-TENORS = [
-    "ON", "1W", "1M", "3M", "6M", "9M", "1Y", "2Y", "3Y", "5Y", "10Y"
-]
+TENORS = ["ON", "1W", "1M", "3M", "6M", "9M", "1Y", "2Y", "3Y", "5Y", "10Y"]
 
 start = (date.today() - timedelta(days=HISTORY_DAYS)).isoformat()
 end   = date.today().isoformat()
 
 # ---------------- Tenor helpers ----------------
 def tenor_to_reldelta(t: str) -> relativedelta:
-    if t == "ON":
-        return relativedelta(days=1)
-    if t.endswith("W"):
-        return relativedelta(weeks=int(t[:-1]))
-    if t.endswith("M"):
-        return relativedelta(months=int(t[:-1]))
-    if t.endswith("Y"):
-        return relativedelta(years=int(t[:-1]))
+    if t == "ON": return relativedelta(days=1)
+    if t.endswith("W"): return relativedelta(weeks=int(t[:-1]))
+    if t.endswith("M"): return relativedelta(months=int(t[:-1]))
+    if t.endswith("Y"): return relativedelta(years=int(t[:-1]))
     raise ValueError(f"Unknown tenor: {t}")
 
 def year_fraction(start_dt, end_dt) -> float:
     return (end_dt - start_dt).days / 365.0
 
 # ---------------- Spot history (Yahoo) ----------------
-spot = yf.download(
-    PAIR_YF,
-    start=start,
-    end=end,
-    progress=False,
-)
+spot = yf.download(PAIR_YF, start=start, end=end, progress=False)
 
 if spot.empty:
     raise RuntimeError("No CAD/USD spot data returned from Yahoo.")
@@ -55,30 +39,35 @@ close = spot["Close"]
 if isinstance(close, pd.DataFrame):
     close = close.iloc[:, 0]
 
-cadusd_hist = close.rename("CADUSD")
-cadusd_hist.index.name = "Date"
-cadusd_hist = cadusd_hist.reset_index()
+cadusd_spot = close.rename("CADUSD")
+cadusd_spot.index.name = "Date"
+cadusd_spot = cadusd_spot.reset_index()
 
-as_of = cadusd_hist["Date"].max()
+as_of = cadusd_spot["Date"].max()
 
-# Spot USD/CAD for CIP
-spot_usdcad = 1.0 / cadusd_hist.loc[cadusd_hist["Date"] == as_of, "CADUSD"].iloc[0]
+# USD/CAD spot for CIP formula
+spot_usdcad = 1.0 / cadusd_spot.loc[cadusd_spot["Date"] == as_of, "CADUSD"].iloc[0]
 
-# ---------------- Fetch rates (USD & CAD) ----------------
-rates = pd.DataFrame()
+# ---------------- Fetch rates from FRED (CSV) ----------------
+usd_rates = pd.read_csv(USD_FRED_CSV)
+cad_rates = pd.read_csv(CAD_FRED_CSV)
 
-usd = pdr.DataReader(USD_RATE_SERIES, "fred", start, end) / 100.0
-cad = pdr.DataReader(CAD_RATE_SERIES, "fred", start, end) / 100.0
+usd_rates["DATE"] = pd.to_datetime(usd_rates["DATE"])
+cad_rates["DATE"] = pd.to_datetime(cad_rates["DATE"])
 
-rates["USD"] = usd.iloc[:, 0]
-rates["CAD"] = cad.iloc[:, 0]
-rates = rates.dropna()
+usd_rates = usd_rates.set_index("DATE")["SOFR"] / 100.0
+cad_rates = cad_rates.set_index("DATE")["CORRA"] / 100.0
+
+rates = pd.concat(
+    [usd_rates.rename("USD"), cad_rates.rename("CAD")],
+    axis=1
+).dropna()
+
 rates_asof = rates.loc[:as_of].iloc[-1]
-
 r_usd = float(rates_asof["USD"])
 r_cad = float(rates_asof["CAD"])
 
-# ---------------- Build discount factors ----------------
+# ---------------- Build DF-based FX forwards ----------------
 rows = []
 
 for ten in TENORS:
@@ -104,14 +93,13 @@ for ten in TENORS:
 cadusd_forwards = pd.DataFrame(rows).sort_values("Date")
 
 # ---------------- Export for Power BI ----------------
-cadusd_spot = cadusd_hist[["Date", "CADUSD"]]
-
-cadusd_meta = pd.DataFrame(
-    [pd.Timestamp.now("UTC")]
-)
-
 cadusd_spot.to_csv("cadusd_spot.csv", index=False)
 cadusd_forwards.to_csv("cadusd_forwards.csv", index=False)
-cadusd_meta.to_csv("cadusd_meta.csv", index=False, header=False)
+
+pd.DataFrame([pd.Timestamp.now("UTC")]).to_csv(
+    "cadusd_meta.csv",
+    index=False,
+    header=False
+)
 
 print("✅ CAD/USD DF-based forwards exported successfully")
