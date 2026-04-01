@@ -11,28 +11,32 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: ✅ Checkout repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: ✅ Set up Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: ✅ Install dependencies
+      - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install pandas matplotlib yfinance
 
-      - name: ✅ Run Sugar #11 pipeline
+      - name: Run Sugar #11 pipeline
         run: |
           python sugar11_pipeline.py
 
-      - name: ✅ Commit updated CSVs
+      - name: Commit CSVs to repo
         run: |
           git config --global user.name "github-actions"
           git config --global user.email "github-actions@github.com"
 
+          # Always sync with remote first
+          git pull --rebase origin main
+
           git add sb_continuous.csv sb_forward.csv sb_meta.csv
-          git commit -m "Auto-update Sugar11 data [skip ci]" || echo "No changes"
-          git push
+          git commit -m "Auto-update Sugar11 data [skip ci]" || echo "No changes to commit"
+
+          git push origin main
