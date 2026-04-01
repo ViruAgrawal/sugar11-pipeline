@@ -45,8 +45,6 @@ jobs:
       # ✅ THEN commit & push
       - name: Commit updated CSVs
         run: |
-          git add \
-            sb_continuous.csv sb_forward.csv sb_meta.csv \
-            cadusd_spot.csv cadusd_forwards.csv cadusd_meta.csv
+          git add sb_continuous.csv sb_forward.csv sb_meta.csv cadusd_spot.csv cadusd_forwards.csv cadusd_meta.csv
           git commit -m "Auto-update Sugar11 data [skip ci]" || echo "No changes to commit"
           git push origin main
