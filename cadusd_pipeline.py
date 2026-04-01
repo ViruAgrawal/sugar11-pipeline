@@ -84,11 +84,11 @@ cadusd_hist = cadusd_hist.reset_index()
 
 as_of = cadusd_hist["Date"].max()
 
-# Spot in USDCAD terms for forward conversion
+# Spot USDCAD (for converting points -> outright)
 S_usdcad = 1.0 / cadusd_hist.loc[cadusd_hist["Date"] == as_of, "CADUSD"].iloc[0]
 
-# ---------------- HTML helpers (Option 1: strong headers) ----------------
-def get_html(url: str) -> str:
+# ---------------- HTML helpers (403-safe) ----------------
+def get_html(url: str) -> str | None:
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -107,11 +107,19 @@ def get_html(url: str) -> str:
         "Connection": "keep-alive",
     }
 
-    r = requests.get(url, headers=headers, timeout=TIMEOUT)
-    r.raise_for_status()
-    return r.text
+    try:
+        r = requests.get(url, headers=headers, timeout=TIMEOUT)
+        if r.status_code != 200:
+            print(f"⚠️ HTTP {r.status_code} from {url}")
+            return None
+        return r.text
+    except requests.RequestException as e:
+        print(f"⚠️ Request failed for {url}: {e}")
+        return None
 
-def read_tables(html: str) -> list[pd.DataFrame]:
+def read_tables(html: str | None) -> list[pd.DataFrame]:
+    if not html:
+        return []
     try:
         return pd.read_html(html)
     except Exception:
