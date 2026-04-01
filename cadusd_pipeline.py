@@ -13,9 +13,8 @@ import yfinance as yf
 HISTORY_DAYS = 1800
 PAIR_YF      = "CADUSD=X"
 
-# Stable public rate sources
-USD_FRED_CSV  = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=SOFR"
-CAD_BOC_CSV   = "https://www.bankofcanada.ca/valet/observations/CORRA/csv"
+USD_FRED_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=SOFR"
+CAD_BOC_CSV  = "https://www.bankofcanada.ca/valet/observations/CORRA/csv"
 
 TENORS = ["ON", "1W", "1M", "3M", "6M", "9M", "1Y", "2Y", "3Y", "5Y", "10Y"]
 
@@ -24,10 +23,14 @@ end   = date.today().isoformat()
 
 # ---------------- Tenor helpers ----------------
 def tenor_to_reldelta(t: str) -> relativedelta:
-    if t == "ON": return relativedelta(days=1)
-    if t.endswith("W"): return relativedelta(weeks=int(t[:-1]))
-    if t.endswith("M"): return relativedelta(months=int(t[:-1]))
-    if t.endswith("Y"): return relativedelta(years=int(t[:-1]))
+    if t == "ON":
+        return relativedelta(days=1)
+    if t.endswith("W"):
+        return relativedelta(weeks=int(t[:-1]))
+    if t.endswith("M"):
+        return relativedelta(months=int(t[:-1]))
+    if t.endswith("Y"):
+        return relativedelta(years=int(t[:-1]))
     raise ValueError(f"Unknown tenor: {t}")
 
 def year_fraction(start_dt, end_dt) -> float:
@@ -53,23 +56,34 @@ as_of = cadusd_spot["Date"].max()
 spot_usdcad = 1.0 / cadusd_spot.loc[cadusd_spot["Date"] == as_of, "CADUSD"].iloc[0]
 
 # ---------------- USD rates (SOFR via FRED CSV) ----------------
-usd_rates = pd.read_csv(USD_FRED_CSV)
-usd_rates["DATE"] = pd.to_datetime(usd_rates["DATE"])
-usd_rates = usd_rates.set_index("DATE")["SOFR"] / 100.0
+usd_raw = pd.read_csv(USD_FRED_CSV)
+usd_raw.columns = [c.lower() for c in usd_raw.columns]
+
+# Detect date column robustly
+date_col_usd = next(c for c in usd_raw.columns if "date" in c)
+rate_col_usd = next(c for c in usd_raw.columns if c != date_col_usd)
+
+usd_rates = (
+    usd_raw
+    .assign(date=lambda d: pd.to_datetime(d[date_col_usd}))
+    .set_index("date")[rate_col_usd]
+    .astype(float) / 100.0
+)
 
 # ---------------- CAD rates (CORRA via BoC Valet CSV) ----------------
-cad_rates = pd.read_csv(CAD_BOC_CSV)
+cad_raw = pd.read_csv(CAD_BOC_CSV)
+cad_raw.columns = [c.lower() for c in cad_raw.columns]
 
-cad_rates["date"] = pd.to_datetime(cad_rates["date"])
-cad_rates["CORRA"] = pd.to_numeric(cad_rates["value"], errors="coerce") / 100.0
-cad_rates = cad_rates.set_index("date")["CORRA"]
+cad_rates = (
+    cad_raw
+    .assign(date=lambda d: pd.to_datetime(d["date"]))
+    .set_index("date")["value"]
+    .astype(float) / 100.0
+)
 
 # ---------------- Align rates ----------------
 rates = pd.concat(
-    [
-        usd_rates.rename("USD"),
-        cad_rates.rename("CAD")
-    ],
+    [usd_rates.rename("USD"), cad_rates.rename("CAD")],
     axis=1
 ).dropna()
 
