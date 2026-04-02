@@ -55,7 +55,7 @@ as_of = usdcad_spot["Date"].max()
 
 # USD/CAD spot for CIP
 spot_usdcad = usdcad_spot.loc[
-    usdcad_spot_spot["Date"] == as_of, "USDCAD"
+    usdcad_spot["Date"] == as_of, "USDCAD"
 ].iloc[0]
 
 # ---------------- USD rates (SOFR via FRED CSV) ----------------
