@@ -58,8 +58,11 @@ spot_usdcad = usdcad_spot.loc[
     usdcad_spot["Date"] == as_of, "USDCAD"
 ].iloc[0]
 
-# ---------------- USD rates (SOFR via FRED CSV) ----------------
-usd_raw = pd.read_csv(USD_FRED_CSV)
+# ---------------- USD rates (SOFR via FRED CSV, robust) ----------------
+resp = requests.get(USD_FRED_CSV, timeout=30)
+resp.raise_for_status()
+
+usd_raw = pd.read_csv(pd.compat.StringIO(resp.text))
 usd_raw.columns = [c.lower() for c in usd_raw.columns]
 
 usd_date_col = next(c for c in usd_raw.columns if "date" in c)
