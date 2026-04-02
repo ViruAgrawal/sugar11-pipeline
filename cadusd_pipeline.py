@@ -12,7 +12,7 @@ import yfinance as yf
 
 # ---------------- Settings ----------------
 HISTORY_DAYS = 1800
-PAIR_YF      = "CADUSD=X"
+PAIR_YF      = "USDCAD=X"
 
 USD_FRED_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=SOFR"
 CAD_BOC_JSON = "https://www.bankofcanada.ca/valet/observations/AVG.INTWO"
@@ -41,21 +41,21 @@ def year_fraction(start_dt, end_dt) -> float:
 spot = yf.download(PAIR_YF, start=start, end=end, progress=False)
 
 if spot.empty:
-    raise RuntimeError("No CAD/USD spot data returned from Yahoo.")
+    raise RuntimeError("No USD/CAD spot data returned from Yahoo.")
 
 close = spot["Close"]
 if isinstance(close, pd.DataFrame):
     close = close.iloc[:, 0]
 
-cadusd_spot = close.rename("CADUSD")
-cadusd_spot.index.name = "Date"
-cadusd_spot = cadusd_spot.reset_index()
+usdcad_spot = close.rename("USDCAD")
+usdcad_spot.index.name = "Date"
+usdcad_spot = usdcad_spot.reset_index()
 
-as_of = cadusd_spot["Date"].max()
+as_of = usdcad_spot["Date"].max()
 
 # USD/CAD spot for CIP
-spot_usdcad = 1.0 / cadusd_spot.loc[
-    cadusd_spot["Date"] == as_of, "CADUSD"
+spot_usdcad = usdcad_spot.loc[
+    usdcad_spot_spot["Date"] == as_of, "USDCAD"
 ].iloc[0]
 
 # ---------------- USD rates (SOFR via FRED CSV) ----------------
