@@ -126,7 +126,7 @@ for ten in TENORS:
 cadusd_forwards = pd.DataFrame(rows).sort_values("Date")
 
 # ---------------- Export for Power BI ----------------
-cadusd_spot.to_csv("cadusd_spot.csv", index=False)
+usdcad_spot.to_csv("cadusd_spot.csv", index=False)
 cadusd_forwards.to_csv("cadusd_forwards.csv", index=False)
 
 pd.DataFrame([pd.Timestamp.now("UTC")]).to_csv(
