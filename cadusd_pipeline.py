@@ -9,6 +9,7 @@ from dateutil.relativedelta import relativedelta
 import requests
 import pandas as pd
 import yfinance as yf
+from io import StringIO
 
 # ---------------- Settings ----------------
 HISTORY_DAYS = 1800
@@ -62,7 +63,7 @@ spot_usdcad = usdcad_spot.loc[
 resp = requests.get(USD_FRED_CSV, timeout=30)
 resp.raise_for_status()
 
-usd_raw = pd.read_csv(pd.compat.StringIO(resp.text))
+usd_raw = pd.read_csv(StringIO(resp.text))
 usd_raw.columns = [c.lower() for c in usd_raw.columns]
 
 usd_date_col = next(c for c in usd_raw.columns if "date" in c)
