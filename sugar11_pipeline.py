@@ -39,10 +39,7 @@ def expiry_from_symbol(symbol: str) -> Optional[pd.Timestamp]:
         return None
 
 def parse_symbol(symbol: str):
-    # SBH26.NYB → ("H", 2026)
-    code = symbol[2]
-    year = 2000 + int(symbol[3:5])
-    return code, year
+    return symbol[2], 2000 + int(symbol[3:5])
 
 def next_contract_pairs(n: int, today: Optional[date] = None):
     today = today or date.today()
@@ -51,8 +48,6 @@ def next_contract_pairs(n: int, today: Optional[date] = None):
     i = start_idx
     while len(out) < n:
         code, m = CYCLE[i]
-        if yr == today.year and m < today.month:
-            yr += 1
         out.append((code, yr))
         i = (i + 1) % len(CYCLE)
         if i == 0:
@@ -83,10 +78,25 @@ def fetch_hist(symbol: str) -> pd.DataFrame:
         return pd.DataFrame()
 
     df = df.reset_index()
-    df.columns = [str(c).lower() for c in df.columns]
+
+    # Robust column normalization
+    def norm_col(c):
+        if isinstance(c, tuple):
+            c = c[0]
+        return str(c).lower().replace(" ", "")
+
+    df.columns = [norm_col(c) for c in df.columns]
 
     if "date" not in df.columns:
-        df = df.rename(columns={df.columns[0]: "date"})
+        return pd.DataFrame()
+
+    # Ensure required price fields exist
+    for col in ["close", "high", "low"]:
+        if col not in df.columns:
+            return pd.DataFrame()
+
+    if "volume" not in df.columns:
+        df["volume"] = pd.NA
 
     return df[["date", "close", "high", "low", "volume"]].assign(symbol=symbol)
 
@@ -115,92 +125,71 @@ contracts_df = contracts_df.dropna(subset=["date"])
 contracts_df["expiry"] = contracts_df["symbol"].apply(expiry_from_symbol)
 contracts_df = contracts_df.dropna(subset=["expiry"])
 
-if contracts_df.empty:
-    pb_forward_final = pd.DataFrame()
-else:
-    contracts_wide = contracts_df.pivot_table(
-        index="date", columns="symbol", values="close"
-    ).sort_index()
+contracts_wide = contracts_df.pivot_table(
+    index="date", columns="symbol", values="close"
+).sort_index()
 
-    counts = contracts_wide.notna().sum(axis=1)
-    as_of = counts[counts >= 2].index.max()
-    as_of_ts = pd.to_datetime(as_of)
+counts = contracts_wide.notna().sum(axis=1)
+as_of = counts[counts >= 2].index.max()
+as_of_ts = pd.to_datetime(as_of)
 
-    last_px_by_contract = (
-        contracts_df[contracts_df["date"] <= as_of_ts]
-        .sort_values(["symbol", "date"])
-        .groupby("symbol")
-        .tail(1)
-        .set_index("symbol")
-        .reset_index()
-        .rename(columns={
-            "symbol": "Symbol",
-            "expiry": "Expiry",
-            "close": "Close",
-            "high": "High",
-            "low": "Low",
-            "volume": "Volume",
-        })
-    )
+last_px = (
+    contracts_df[contracts_df["date"] <= as_of_ts]
+    .sort_values(["symbol", "date"])
+    .groupby("symbol")
+    .tail(1)
+    .rename(columns={"symbol": "Symbol", "expiry": "Expiry"})
+)
 
-    # -------- Expand backwards to monthly rows --------
-    def expand_backwards(row: pd.Series) -> pd.DataFrame:
-        dates = pd.date_range(as_of_ts, row["Expiry"], freq="M")
-        code, year = parse_symbol(row["Symbol"])
-        return pd.DataFrame({
-            "Date": dates,
-            "Symbol": row["Symbol"],
-            "Expiry": row["Expiry"],
-            "Close": row["Close"],
-            "High": row["High"],
-            "Low": row["Low"],
-            "Volume": row["Volume"],
+# ---------------- Expand backward monthly ----------------
+rows = []
+for _, r in last_px.iterrows():
+    dates = pd.date_range(as_of_ts, r["Expiry"], freq="M")
+    code, year = parse_symbol(r["Symbol"])
+    for d in dates:
+        rows.append({
+            "Date": d,
+            "Symbol": r["Symbol"],
+            "Expiry": r["Expiry"],
+            "Close": r["close"],
+            "High": r["high"],
+            "Low": r["low"],
+            "Volume": r["volume"],
             "MonthCode": code,
             "CropYear": year,
         })
 
-    monthly_frames = [
-        expand_backwards(row)
-        for _, row in last_px_by_contract.iterrows()
-    ]
+pb_forward_monthly = pd.DataFrame(rows)
 
-    pb_forward_monthly = (
-        pd.concat(monthly_frames, ignore_index=True)
-        .sort_values(["Date", "Symbol"])
-    )
+# ---------------- Quarter pricing ----------------
+pivot = pb_forward_monthly.pivot_table(
+    index=["Date", "CropYear"],
+    columns="MonthCode",
+    values="Close"
+).reset_index()
 
-    # -------- Quarter pricing --------
-    pivot = pb_forward_monthly.pivot_table(
-        index=["Date", "CropYear"],
-        columns="MonthCode",
-        values="Close"
-    ).reset_index()
+pivot["Q1_Price"] = (2/3) * pivot["H"] + (1/3) * pivot["K"]
+pivot["Q2_Price"] = (1/3) * pivot["K"] + (2/3) * pivot["N"]
+pivot["Q3_Price"] = pivot["V"]
 
-    pivot["Q1_Price"] = (2/3) * pivot["H"] + (1/3) * pivot["K"]
-    pivot["Q2_Price"] = (1/3) * pivot["K"] + (2/3) * pivot["N"]
-    pivot["Q3_Price"] = pivot["V"]
+pivot["H_next"] = pivot.groupby("Date")["H"].shift(-1)
+pivot["Q4_Price"] = (2/3) * pivot["V"] + (1/3) * pivot["H_next"]
 
-    pivot["H_next"] = pivot.groupby("Date")["H"].shift(-1)
-    pivot["Q4_Price"] = (2/3) * pivot["V"] + (1/3) * pivot["H_next"]
-    pivot = pivot.drop(columns=["H_next"])
-
-    pb_forward_final = pb_forward_monthly.merge(
-        pivot[["Date", "Q1_Price", "Q2_Price", "Q3_Price", "Q4_Price"]],
-        on="Date",
-        how="left"
-    )
+pb_forward = pb_forward_monthly.merge(
+    pivot[["Date", "Q1_Price", "Q2_Price", "Q3_Price", "Q4_Price"]],
+    on="Date",
+    how="left"
+)
 
 # ---------------- Export ----------------
-pb_continuous = cont_df.reset_index().rename(
+cont_df.reset_index().rename(
     columns={"date": "Date", "close_cont": "Close"}
-)
+).to_csv("sb_continuous.csv", index=False)
 
-pb_meta = pd.DataFrame(
-    {"AsOfUTC": [pd.Timestamp.utcnow()]}
-)
+pb_forward.to_csv("sb_forward.csv", index=False)
 
-pb_continuous.to_csv("sb_continuous.csv", index=False)
-pb_forward_final.to_csv("sb_forward.csv", index=False)
-pb_meta.to_csv("sb_meta.csv", index=False)
+pd.DataFrame({"AsOfUTC": [pd.Timestamp.utcnow()]}).to_csv(
+    "sb_meta.csv", index=False
+)
 
 print("✅ CSV export complete")
