@@ -38,6 +38,12 @@ def expiry_from_symbol(symbol: str) -> Optional[pd.Timestamp]:
     except Exception:
         return None
 
+def parse_symbol(symbol: str):
+    # SBH26.NYB → ("H", 2026)
+    code = symbol[2]
+    year = 2000 + int(symbol[3:5])
+    return code, year
+
 def next_contract_pairs(n: int, today: Optional[date] = None):
     today = today or date.today()
     out, yr = [], today.year
@@ -71,27 +77,16 @@ def fetch_hist(symbol: str) -> pd.DataFrame:
             auto_adjust=False,
         )
     except Exception:
-        print(f"[Skip] {symbol}: download failed")
         return pd.DataFrame()
 
     if df.empty:
-        print(f"[Skip] {symbol}: empty data")
         return pd.DataFrame()
 
     df = df.reset_index()
-
-    def norm(c):
-        return c[0].lower() if isinstance(c, tuple) else str(c).lower()
-
-    df.columns = [norm(c) for c in df.columns]
+    df.columns = [str(c).lower() for c in df.columns]
 
     if "date" not in df.columns:
         df = df.rename(columns={df.columns[0]: "date"})
-
-    required = {"date", "close", "high", "low", "volume"}
-    if not required.issubset(df.columns):
-        print(f"[Skip] {symbol}: missing columns")
-        return pd.DataFrame()
 
     return df[["date", "close", "high", "low", "volume"]].assign(symbol=symbol)
 
@@ -121,15 +116,14 @@ contracts_df["expiry"] = contracts_df["symbol"].apply(expiry_from_symbol)
 contracts_df = contracts_df.dropna(subset=["expiry"])
 
 if contracts_df.empty:
-    print("⚠️ No valid futures contracts available from Yahoo.")
-    pb_forward = pd.DataFrame()
+    pb_forward_final = pd.DataFrame()
 else:
     contracts_wide = contracts_df.pivot_table(
         index="date", columns="symbol", values="close"
     ).sort_index()
 
     counts = contracts_wide.notna().sum(axis=1)
-    as_of = counts[counts >= 2].index.max() if (counts >= 2).any() else contracts_wide.index.max()
+    as_of = counts[counts >= 2].index.max()
     as_of_ts = pd.to_datetime(as_of)
 
     last_px_by_contract = (
@@ -138,11 +132,7 @@ else:
         .groupby("symbol")
         .tail(1)
         .set_index("symbol")
-    )
-
-    pb_forward = (
-        last_px_by_contract
-        .reset_index()[["symbol", "expiry", "close", "high", "low", "volume"]]
+        .reset_index()
         .rename(columns={
             "symbol": "Symbol",
             "expiry": "Expiry",
@@ -151,6 +141,53 @@ else:
             "low": "Low",
             "volume": "Volume",
         })
+    )
+
+    # -------- Expand backwards to monthly rows --------
+    def expand_backwards(row: pd.Series) -> pd.DataFrame:
+        dates = pd.date_range(as_of_ts, row["Expiry"], freq="M")
+        code, year = parse_symbol(row["Symbol"])
+        return pd.DataFrame({
+            "Date": dates,
+            "Symbol": row["Symbol"],
+            "Expiry": row["Expiry"],
+            "Close": row["Close"],
+            "High": row["High"],
+            "Low": row["Low"],
+            "Volume": row["Volume"],
+            "MonthCode": code,
+            "CropYear": year,
+        })
+
+    monthly_frames = [
+        expand_backwards(row)
+        for _, row in last_px_by_contract.iterrows()
+    ]
+
+    pb_forward_monthly = (
+        pd.concat(monthly_frames, ignore_index=True)
+        .sort_values(["Date", "Symbol"])
+    )
+
+    # -------- Quarter pricing --------
+    pivot = pb_forward_monthly.pivot_table(
+        index=["Date", "CropYear"],
+        columns="MonthCode",
+        values="Close"
+    ).reset_index()
+
+    pivot["Q1_Price"] = (2/3) * pivot["H"] + (1/3) * pivot["K"]
+    pivot["Q2_Price"] = (1/3) * pivot["K"] + (2/3) * pivot["N"]
+    pivot["Q3_Price"] = pivot["V"]
+
+    pivot["H_next"] = pivot.groupby("Date")["H"].shift(-1)
+    pivot["Q4_Price"] = (2/3) * pivot["V"] + (1/3) * pivot["H_next"]
+    pivot = pivot.drop(columns=["H_next"])
+
+    pb_forward_final = pb_forward_monthly.merge(
+        pivot[["Date", "Q1_Price", "Q2_Price", "Q3_Price", "Q4_Price"]],
+        on="Date",
+        how="left"
     )
 
 # ---------------- Export ----------------
@@ -163,7 +200,7 @@ pb_meta = pd.DataFrame(
 )
 
 pb_continuous.to_csv("sb_continuous.csv", index=False)
-pb_forward.to_csv("sb_forward.csv", index=False)
+pb_forward_final.to_csv("sb_forward.csv", index=False)
 pb_meta.to_csv("sb_meta.csv", index=False)
 
 print("✅ CSV export complete")
